@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Webcam test</title>
+    </head>
+    <body>
+        <div>
+    <video id="previewVideo" autoplay></video>
+    <p>Live view</p>
+    <button id="previewButton">Snap a preview</button>
+</div>
+<div>
+    <img id="previewImg" src="">
+    <p>Preview</p>
+    <canvas id="previewCanvas" style="display:none;"></canvas>
+    <button id="uploadButton" disabled>Send to server</button>
+    <p>
+        <progress id="uploadProgress" value="0" max="100"></progress>
+    </p>
+</div>
+<!-- this is a django template specific tag to enable CSRF to protect our request -->
+{% csrf_token %}
+
+<script>
+    // setup some constants for convenience
+const backendEndpoint = "/snapshot/upload";
+const previewVideo = document.querySelector("#previewVideo");
+const previewButton = document.querySelector("#previewButton");
+const previewImg = document.querySelector("#previewImg");
+const previewCanvas = document.querySelector("#previewCanvas");
+const uploadButton = document.querySelector("#uploadButton");
+const uploadProgress = document.querySelector("#uploadProgress");
+
+// define the function we'll use for callback when taking a snapshot
+function takeSnapshot() {
+    // set canvas size to be the same as the video element
+    previewCanvas.width = previewVideo.videoWidth;
+    previewCanvas.height = previewVideo.videoHeight;
+    // draw a frame from video stream to the canvas
+    previewCanvas.getContext("2d").drawImage(previewVideo, 0, 0);
+    // convert canvas to image and set it as the source of the  preview image
+    previewImg.src = previewCanvas.toDataURL("image/png");
+    // enable upload button and reset progress bar
+    uploadButton.disable = false;
+    uploadProgress.value = 0;
+}
+
+// define the function to send the image to the server. This will be
+// the callback for the upload button
+function uploadSnapshot() {
+    uploadButton.disable = true;
+    var imageData = previewImg.src;
+    // Get the csrftoken created by Django protect us against CSRF attacks
+    var csrftoken = document.querySelector("input[name=csrfmiddlewaretoken]").value;
+
+    var xhr = new XMLHttpRequest();
+
+    // callback to handle state change of the request
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState == XMLHttpRequest.DONE) {
+            /* I'm watching for 201 Created return code since each request 
+               creates (stores) a new image on the server. */
+            if (xhr.status == 201) {
+                // the response is in json format
+                var response = JSON.parse(xhr.response);
+                // simply write the file name to console for now
+                console.log(response.filename);
+            }
+            else {
+                console.log("Error during upload, response was: " + xhr.status);
+            }
+        }
+    };
+
+    // callback to update the progress bar
+    xhr.onprogress = function(evt) {
+        if (evt.lengthComputable) {
+            var percent_done = (evt.loaded / evt.total) * 100;
+            uploadProgress.value = percent_done;
+        }
+    };
+
+    // Prepare the json request
+    xhr.open("POST", backendEndpoint, true);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    // add the csrftoken as a request header
+    xhr.setRequestHeader("X-CSRFToken", csrftoken);
+
+    // Send the image data
+    var data = JSON.stringify({"snapshot": imageData});
+    xhr.send(data);
+}
+
+// callback to handle a successful image capture
+function snapshotSuccess(stream) {
+    uploadButton.disabled = false;
+    uploadProgress.value = 0;
+    previewVideo.srcObject = stream;
+}
+
+// callback to handle failure to get image from webcam
+function snapshotError(error) {
+    console.error("navigator.getUserMedia error: ", error);
+}
+
+// connect callbacks
+previewButton.onclick = previewVideo.onclick = takeSnapshot;
+uploadButton.onclick = uploadSnapshot;
+
+// define video properties we want
+const constraints = { video: { width: 320, height: 200, facingMode: "environment" }};
+// setup video stream
+navigator.mediaDevices.getUserMedia(constraints)
+    .then(snapshotSuccess)
+    .catch(snapshotError);
+</script>
+    </body>
+</html>
+
